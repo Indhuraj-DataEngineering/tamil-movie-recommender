@@ -6,8 +6,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 st.set_page_config(page_title="Tamil Movie Recommender", layout="wide")
 
-# Replace with your free API key from https://www.themoviedb.org/
-TMDB_API_KEY = "YOUR_TMDB_API_KEY"
+TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "")
 
 @st.cache_data
 def load_data():
