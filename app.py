@@ -6,6 +6,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 st.set_page_config(page_title="Tamil Movie Recommender", layout="wide")
 
+# Reads API Key from Streamlit Cloud Secrets
 TMDB_API_KEY = st.secrets.get("TMDB_API_KEY", "")
 
 @st.cache_data
@@ -22,7 +23,7 @@ if 'title' not in movies_df.columns:
     st.error("Could not find 'title' column in movies.csv")
     st.stop()
 
-# 1. Sidebar Genre Filter
+# Sidebar Genre Filter
 st.sidebar.header("Filter Options")
 if 'genres' in movies_df.columns:
     movies_df['genres'] = movies_df['genres'].fillna('')
@@ -32,30 +33,34 @@ if 'genres' in movies_df.columns:
     if selected_genres:
         movies_df = movies_df[movies_df['genres'].apply(lambda x: any(g in str(x) for g in selected_genres))]
 
-# 2. Auto-Complete Search Box
+# Search Box
 movie_titles = movies_df['title'].values if not movies_df.empty else ["No movies found"]
 selected_movie = st.selectbox("Search or select a movie:", movie_titles)
 
-# 3. Helper Function to Fetch Poster
-def fetch_poster(movie_title, api_key):
-    if not api_key or api_key == "YOUR_TMDB_API_KEY":
+# Helper Function: Fetches Poster, TMDb Rating, and Release Year
+@st.cache_data(ttl=86400)
+def fetch_movie_details(movie_title, api_key):
+    if not api_key:
         return None
     try:
-        # Remove year from title for clean TMDb search (e.g. "Kaithi (2019)" -> "Kaithi")
         clean_title = movie_title.split('(')[0].strip()
-        url = f"https://api.themoviedb.org/3/search/movie?api_key={api_key}&query={clean_title}"
+        url = f"https://api.themoviedb.org/3/search/movie?api_key={api_key}&query={clean_title}&language=en-US&region=IN"
         response = requests.get(url, timeout=5).json()
         results = response.get('results', [])
         
         if results and results[0].get('poster_path'):
-            poster_path = results[0]['poster_path']
-            return f"https://image.tmdb.org/t/p/w500/{poster_path}"
+            first_match = results[0]
+            return {
+                "poster": f"https://image.tmdb.org/t/p/w500/{first_match['poster_path']}",
+                "rating": round(first_match.get('vote_average', 0.0), 1),
+                "year": first_match.get('release_date', '')[:4]
+            }
     except Exception:
         pass
     return None
 
-# 4. Recommendation Function (ONLY includes movies with valid posters)
-def get_recommendations_with_posters(target_movie, df, api_key, top_n=4):
+# Recommendation Logic (Includes only movies with valid TMDb details)
+def get_recommendations_with_details(target_movie, df, api_key, top_n=4):
     if 'genres' not in df.columns or len(df) <= 1:
         return []
         
@@ -74,41 +79,48 @@ def get_recommendations_with_posters(target_movie, df, api_key, top_n=4):
     for i, score in sim_scores:
         candidate_title = df.iloc[i]['title']
         
-        # Skip the selected movie itself
         if candidate_title == target_movie:
             continue
             
-        poster_url = fetch_poster(candidate_title, api_key)
+        details = fetch_movie_details(candidate_title, api_key)
         
-        # ONLY include the movie if a poster was successfully found
-        if poster_url:
-            recommendations.append((candidate_title, poster_url))
+        if details:
+            recommendations.append((candidate_title, details))
             
         if len(recommendations) == top_n:
             break
             
     return recommendations
 
-# 5. Display Recommendations
+# Render UI
 if st.button("Get Recommendations"):
-    if TMDB_API_KEY == "YOUR_TMDB_API_KEY":
-        st.error("Please replace 'YOUR_TMDB_API_KEY' in app.py with your TMDb API key to enable poster filtering.")
+    if not TMDB_API_KEY:
+        st.error("TMDb API key missing in Streamlit secrets.")
     else:
         st.write(f"### Recommended movies based on **{selected_movie}**:")
         
-        recs = get_recommendations_with_posters(selected_movie, movies_df, TMDB_API_KEY, top_n=4)
+        recs = get_recommendations_with_details(selected_movie, movies_df, TMDB_API_KEY, top_n=4)
         
         if recs:
             cols = st.columns(len(recs))
             for idx, col in enumerate(cols):
-                title, poster = recs[idx]
+                title, details = recs[idx]
                 with col:
-                    st.image(poster, use_container_width=True)
-                    st.caption(f"**{title}**")
+                    # Bordered Card Container Layout
+                    with st.container(border=True):
+                        st.image(details['poster'], use_container_width=True)
+                        st.markdown(f"**{title}**")
+                        
+                        # Rating & Release Year Badges
+                        col_rating, col_year = st.columns(2)
+                        with col_rating:
+                            st.caption(f"⭐ **{details['rating']}/10**")
+                        with col_year:
+                            st.caption(f"📅 **{details['year'] if details['year'] else 'N/A'}**")
         else:
             st.warning("No recommendations found with available posters.")
 
-# 6. User Feedback
+# Feedback Widget
 st.divider()
 st.subheader("Was this recommendation helpful?")
 feedback = st.feedback("thumbs")
