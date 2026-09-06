@@ -1,13 +1,15 @@
 import streamlit as st
 import pandas as pd
-import requests
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
 
+# Set page layout
 st.set_page_config(page_title="Tamil Movie Recommender", layout="wide")
 
+# Load and clean dataset
 @st.cache_data
 def load_data():
     movies = pd.read_csv('movies.csv')
-    # Clean column names (strip whitespace and convert to lowercase)
     movies.columns = movies.columns.str.strip().str.lower()
     return movies
 
@@ -15,15 +17,15 @@ movies_df = load_data()
 
 st.title("🎬 Tamil Movie Recommender")
 
-# Safety check if 'title' column is missing under any variation
 if 'title' not in movies_df.columns:
-    st.error(f"Could not find a 'title' column in movies.csv. Available columns in your file are: {list(movies_df.columns)}")
+    st.error("Could not find 'title' column in movies.csv")
     st.stop()
 
 # 1. Sidebar Genre Filter
 st.sidebar.header("Filter Options")
 if 'genres' in movies_df.columns:
-    all_genres = sorted(list(set(g for sublist in movies_df['genres'].dropna().str.split('|') for g in sublist)))
+    movies_df['genres'] = movies_df['genres'].fillna('')
+    all_genres = sorted(list(set(g for sublist in movies_df['genres'].str.split('|') for g in sublist if g)))
     selected_genres = st.sidebar.multiselect("Filter by Genre", options=all_genres)
     
     if selected_genres:
@@ -33,29 +35,45 @@ if 'genres' in movies_df.columns:
 movie_titles = movies_df['title'].values if not movies_df.empty else ["No movies found"]
 selected_movie = st.selectbox("Search or select a movie:", movie_titles)
 
-# 3. TMDb API Helper Function for Movie Posters
-def fetch_poster(movie_title, api_key="YOUR_TMDB_API_KEY"):
-    try:
-        url = f"https://api.themoviedb.org/3/search/movie?api_key={api_key}&query={movie_title}"
-        response = requests.get(url).json()
-        poster_path = response['results'][0]['poster_path']
-        return f"https://image.tmdb.org/t/p/w500/{poster_path}"
-    except Exception:
-        return "https://via.placeholder.com/500x750?text=No+Poster+Available"
+# 3. Recommendation Function (Excludes the selected movie)
+def get_recommendations(target_movie, df, top_n=4):
+    # Exclude the selected movie so it doesn't recommend itself
+    filtered_df = df[df['title'] != target_movie].copy()
+    
+    if 'genres' in df.columns and len(df) > 1:
+        # Calculate genre similarity
+        tfidf = TfidfVectorizer(stop_words='english')
+        tfidf_matrix = tfidf.fit_transform(df['genres'])
+        
+        idx_list = df[df['title'] == target_movie].index
+        if len(idx_list) > 0:
+            idx = idx_list[0]
+            sim_scores = list(enumerate(cosine_similarity(tfidf_matrix[idx], tfidf_matrix)[0]))
+            sim_scores = sorted(sim_scores, key=lambda x: x[1], reverse=True)
+            
+            # Remove the selected movie index from recommendations
+            sim_scores = [x for x in sim_scores if x[0] != idx]
+            
+            movie_indices = [i[0] for i in sim_scores[:top_n]]
+            return df.iloc[movie_indices]['title'].tolist()
+            
+    return filtered_df['title'].head(top_n).tolist()
 
-# Generate Recommendations
+# 4. Display Recommendations
 if st.button("Get Recommendations"):
     st.write(f"### Recommended movies based on **{selected_movie}**:")
     
-    recommendations = movies_df['title'].dropna().head(4).tolist()
+    recs = get_recommendations(selected_movie, movies_df, top_n=4)
     
-    cols = st.columns(len(recommendations)) if recommendations else []
-    for idx, col in enumerate(cols):
-        with col:
-            rec_title = recommendations[idx]
-            st.caption(rec_title)
+    if recs:
+        cols = st.columns(len(recs))
+        for idx, col in enumerate(cols):
+            with col:
+                st.write(f"**{recs[idx]}**")
+    else:
+        st.write("No other movies found.")
 
-# 4. User Feedback Widget
+# 5. User Feedback
 st.divider()
 st.subheader("Was this recommendation helpful?")
 feedback = st.feedback("thumbs")
