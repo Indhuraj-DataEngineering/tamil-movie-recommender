@@ -14,6 +14,10 @@ Try the application here:
 
 https://tamil-movie-recommender-indhuraj.streamlit.app/
 
+## 🖥️ Application Preview
+
+![Tamil Movie Recommendation System Demo](tamil-movie-recommender-demo.png)
+
 ## 🛠️ Technologies Used
 
 - Python
